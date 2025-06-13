@@ -16,25 +16,13 @@ sheet = client.open("UserTransactions")
 users_sheet = sheet.worksheet("Users")
 transactions_sheet = sheet.worksheet("Transactions")
 
-ADMIN_EMAIL = "admin@example.com"
-
 # ---------- Helper Functions ----------
 def get_all_users():
     return users_sheet.get_all_records()
 
-def add_user(name, email, password):
-    users_sheet.append_row([name, email, password])
-
-def delete_user(email):
-    users = users_sheet.get_all_records()
-    for idx, user in enumerate(users, start=2):
-        if user['Email'] == email:
-            users_sheet.delete_rows(idx)
-            delete_all_transactions(email)
-            return True
-    return False
-
 def add_transaction(user_email, amount, type_, description):
+    if type_ == 'credit':
+        return  # Ignore credit transactions
     timestamp = datetime.now().isoformat()
     transactions_sheet.append_row([user_email, amount, type_, description, timestamp])
 
@@ -48,12 +36,6 @@ def delete_transaction(user_email, timestamp):
         if row['UserEmail'] == user_email and row['Timestamp'] == timestamp:
             transactions_sheet.delete_rows(idx)
             break
-
-def delete_all_transactions(user_email):
-    all_data = transactions_sheet.get_all_records()
-    for idx in reversed(range(len(all_data))):
-        if all_data[idx]['UserEmail'] == user_email:
-            transactions_sheet.delete_rows(idx + 2)
 
 def delete_transactions_between_dates(start_date, end_date):
     all_data = transactions_sheet.get_all_records()
@@ -131,45 +113,41 @@ def export_pdf(user_email):
 st.set_page_config(page_title="Transaction Manager", layout="centered")
 st.title("📊 Google Sheets Transaction Manager")
 
-st.subheader("Admin Panel")
-tabs = st.tabs(["➕ Add Transaction", "📄 View Transactions", "🗑 Delete Transaction", "📤 Export PDF", "🧹 Delete Between Dates", "📊 All User Dues", "👥 Delete User"])
+all_users = get_all_users()
+names = [u['Name'] for u in all_users]
+selected = st.selectbox("Select User", names)
+selected_user = next(u for u in all_users if u['Name'] == selected)
+
+# Tabs
+tabs = st.tabs(["➕ Add Transaction", "📄 View Transactions", "📤 Export PDF", "📊 All User Dues", "🧹 Delete Between Dates"])
 
 with tabs[0]:
-    all_users = get_all_users()
-    names = [u['Name'] for u in all_users]
-    selected = st.selectbox("Select User", names)
-    selected_user = next(u for u in all_users if u['Name'] == selected)
     amount = st.number_input("Amount")
-    type_ = "debit"
-    st.markdown("**Transaction Type:** Debit")
+    type_ = 'debit'
     description = st.text_input("Description")
     if st.button("Add Transaction"):
         add_transaction(selected_user['Email'], amount, type_, description)
-        st.success("Transaction added.")
-        st.experimental_rerun()
+        st.success("Transaction Added")
 
 with tabs[1]:
-    selected = st.selectbox("Select User to View", [u['Name'] for u in get_all_users()])
-    user_email = next(u['Email'] for u in get_all_users() if u['Name'] == selected)
-    st.dataframe(get_user_transactions(user_email))
+    st.dataframe(get_user_transactions(selected_user['Email']))
 
 with tabs[2]:
-    selected = st.selectbox("Select User to Delete From", [u['Name'] for u in get_all_users()])
-    user_email = next(u['Email'] for u in get_all_users() if u['Name'] == selected)
-    transactions = get_user_transactions(user_email)
-    if transactions:
-        options = {f"{t['Timestamp']} | {t['Type']} | Rs.{t['Amount']}": t['Timestamp'] for t in transactions}
-        to_delete = st.selectbox("Select Transaction", list(options.keys()))
-        if st.button("Delete Transaction"):
-            delete_transaction(user_email, options[to_delete])
-            st.success("Transaction deleted.")
-    else:
-        st.info("No transactions found.")
+    export_pdf(selected_user['Email'])
 
 with tabs[3]:
-    selected = st.selectbox("Select User to Export PDF", [u['Name'] for u in get_all_users()])
-    user_email = next(u['Email'] for u in get_all_users() if u['Name'] == selected)
-    export_pdf(user_email)
+    st.subheader("All Users Dues")
+    dues = calculate_user_dues()
+    users = get_all_users()
+    total_due = 0
+    data = []
+    for u in users:
+        email = u['Email']
+        due = dues.get(email, 0)
+        total_due += due
+        data.append({"Name": u['Name'], "Email": email, "Due (Rs)": round(due, 2)})
+    st.dataframe(data)
+    st.write(f"### Total Due: Rs.{total_due:.2f}")
 
 with tabs[4]:
     st.subheader("Delete Transactions Between Two Dates")
@@ -178,30 +156,3 @@ with tabs[4]:
     if st.button("Delete Transactions"):
         delete_transactions_between_dates(datetime.combine(start, datetime.min.time()), datetime.combine(end, datetime.max.time()))
         st.success("Transactions deleted.")
-
-with tabs[5]:
-    st.subheader("All Users Dues")
-    dues = calculate_user_dues()
-    users = get_all_users()
-
-    dues_data = []
-    total_due = 0
-    for u in users:
-        email = u['Email']
-        due = dues.get(email, 0)
-        total_due += due
-        dues_data.append({
-            "Name": u['Name'],
-            "Email": email,
-            "Due Amount (Rs.)": f"{due:.2f}"
-        })
-
-    st.dataframe(dues_data, use_container_width=True)
-    st.markdown(f"### 🧾 Total of All Users Due: Rs.{total_due:.2f}")
-
-with tabs[6]:
-    selected = st.selectbox("Select User to Delete", [u['Name'] for u in get_all_users() if u['Email'] != ADMIN_EMAIL])
-    user_email = next(u['Email'] for u in get_all_users() if u['Name'] == selected)
-    if st.button("Delete User"):
-        if delete_user(user_email):
-            st.success("User deleted successfully")
